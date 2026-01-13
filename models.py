@@ -29,9 +29,9 @@ class Channel(SQLModel, table=True):
     is_enabled: bool = Field(default=True) # 是否启用该频道
     
     # 深度检测结果
-    check_status: bool | None = Field(default=None) # 检测是否通顺
-    check_date: datetime | None = Field(default=None) # 最后检测时间
-    check_image: str | None = Field(default=None) # 频道截图 (Base64)
+    check_status: Optional[bool] = Field(default=None) # 检测是否通顺
+    check_date: Optional[datetime] = Field(default=None) # 最后检测时间
+    check_image: Optional[str] = Field(default=None) # 频道截图 (Base64)
     
     subscription: Subscription = Relationship(back_populates="channels")
 
