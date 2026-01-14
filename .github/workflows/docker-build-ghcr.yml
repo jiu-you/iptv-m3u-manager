@@ -53,4 +53,23 @@ jobs:
           if [[ "${{ github.event_name }}" == "push" ]]; then
             TAG="${GITHUB_REF#refs/tags/}"
           else
-            TAG="${{
+            TAG="${{ github.event.inputs.image_tag }}"
+          fi
+          
+          echo "full_image=$FULL_IMAGE" >> $GITHUB_OUTPUT
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+
+      # 5. 构建并推送（包含 AMD64 和 ARM64）
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          # 关键修改：明确指定构建平台
+          platforms: linux/amd64,linux/arm64
+          tags: |
+            ${{ steps.meta.outputs.full_image }}:${{ steps.meta.outputs.tag }}
+            ${{ steps.meta.outputs.full_image }}:latest
+          # 缓存优化
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
