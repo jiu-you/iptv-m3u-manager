@@ -1,57 +1,69 @@
-# 工作流名称
-name: Build and Push to GHCR
+name: Build & Push Public Image to GHCR (Tag Trigger)
 
-# 触发条件：推送到 main 分支时执行
+# 触发条件：推送任意 Tag（格式建议 v*，如 v1.0.0、v2.1.1）
 on:
   push:
-    branches: [ main ]
-    paths:
-      - '**.py'       # 根据你的项目文件类型调整（如 .java/.js 等）
-      - 'Dockerfile'
-      - 'requirements.txt'
+    tags:
+      - 'v*'  # 只匹配以 v 开头的 Tag（如 v1.0.0），可改为 '*' 匹配所有 Tag
 
-# 工作流权限配置（关键：赋予读写 GHCR 的权限）
+# 权限配置（不变，保证推送和公开镜像的权限）
 permissions:
-  contents: read        # 允许拉取仓库代码
-  packages: write       # 允许推送镜像到 GHCR
+  contents: read
+  packages: write
+  repository-projects: write
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     steps:
-      # 步骤 1：拉取 GitHub 仓库代码
+      # 步骤 1：拉取仓库代码（包含 Tag 信息）
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # 拉取完整历史，确保能获取 Tag 信息
 
-      # 步骤 2：设置镜像标签（用提交哈希和 latest）
-      - name: Set image tags
+      # 步骤 2：提取 Tag 名称作为镜像标签（核心修改）
+      - name: Set image info from Tag
         run: |
-          # 获取 GitHub 用户名（自动从环境变量读取）
-          USERNAME=${{ github.actor }}
-          # 短提交哈希作为唯一标签
-          TAG=$(git rev-parse --short HEAD)
-          # 拼接 GHCR 镜像完整名称
-          echo "IMAGE_NAME=ghcr.io/$USERNAME/my-project:$TAG" >> $GITHUB_ENV
-          echo "IMAGE_LATEST=ghcr.io/$USERNAME/my-project:latest" >> $GITHUB_ENV
+          # 获取推送的 Tag 名称（如 refs/tags/v1.0.0 → v1.0.0）
+          TAG_NAME=${GITHUB_REF#refs/tags/}
+          # 转为小写的 GitHub 用户名
+          USERNAME=$(echo "${{ github.actor }}" | tr '[:upper:]' '[:lower:]')
+          # 自定义镜像名
+          IMAGE_NAME="iptv-m3u-manager"
+          
+          # 拼接完整镜像名
+          FULL_IMAGE="ghcr.io/$USERNAME/$IMAGE_NAME"
+          # 输出环境变量
+          echo "FULL_IMAGE=$FULL_IMAGE" >> $GITHUB_ENV
+          echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
+          echo "LATEST_TAG=latest" >> $GITHUB_ENV
 
-      # 步骤 3：登录到 GitHub Container Registry（GHCR）
+      # 步骤 3：免密登录 GHCR（不变）
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
-          # 使用 GitHub 自动生成的 GITHUB_TOKEN 认证（无需手动配置 Secret）
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 步骤 4：构建并推送镜像到 GHCR
+      # 步骤 4：构建并推送镜像（用 Tag 作为镜像标签）
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: .          # 构建上下文（项目根目录）
-          push: true          # 开启推送
+          context: .
+          push: true
           tags: |
-            ${{ env.IMAGE_NAME }}
-            ${{ env.IMAGE_LATEST }}
-          # 可选：开启构建缓存，加速后续构建
+            ${{ env.FULL_IMAGE }}:${{ env.TAG_NAME }}  # 镜像标签 = GitHub Tag 名
+            ${{ env.FULL_IMAGE }}:${{ env.LATEST_TAG }} # 同时打 latest 标签
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # 步骤 5：自动设为公开镜像（不变）
+      - name: Set package visibility to public
+        run: |
+          curl -X PATCH \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/user/packages/container/$(echo ${{ env.FULL_IMAGE }} | cut -d '/' -f 3)/visibility" \
+            -d '{"visibility":"public"}'
