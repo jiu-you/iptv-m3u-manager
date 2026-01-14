@@ -1,0 +1,57 @@
+# 工作流名称
+name: Build and Push to GHCR
+
+# 触发条件：推送到 main 分支时执行
+on:
+  push:
+    branches: [ main ]
+    paths:
+      - '**.py'       # 根据你的项目文件类型调整（如 .java/.js 等）
+      - 'Dockerfile'
+      - 'requirements.txt'
+
+# 工作流权限配置（关键：赋予读写 GHCR 的权限）
+permissions:
+  contents: read        # 允许拉取仓库代码
+  packages: write       # 允许推送镜像到 GHCR
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      # 步骤 1：拉取 GitHub 仓库代码
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # 步骤 2：设置镜像标签（用提交哈希和 latest）
+      - name: Set image tags
+        run: |
+          # 获取 GitHub 用户名（自动从环境变量读取）
+          USERNAME=${{ github.actor }}
+          # 短提交哈希作为唯一标签
+          TAG=$(git rev-parse --short HEAD)
+          # 拼接 GHCR 镜像完整名称
+          echo "IMAGE_NAME=ghcr.io/$USERNAME/my-project:$TAG" >> $GITHUB_ENV
+          echo "IMAGE_LATEST=ghcr.io/$USERNAME/my-project:latest" >> $GITHUB_ENV
+
+      # 步骤 3：登录到 GitHub Container Registry（GHCR）
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          # 使用 GitHub 自动生成的 GITHUB_TOKEN 认证（无需手动配置 Secret）
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 步骤 4：构建并推送镜像到 GHCR
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: .          # 构建上下文（项目根目录）
+          push: true          # 开启推送
+          tags: |
+            ${{ env.IMAGE_NAME }}
+            ${{ env.IMAGE_LATEST }}
+          # 可选：开启构建缓存，加速后续构建
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
