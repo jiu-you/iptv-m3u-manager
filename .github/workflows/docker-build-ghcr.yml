@@ -1,12 +1,20 @@
-name: Build & Push Public Image to GHCR (Tag Trigger)
+name: Build & Push Public Image to GHCR (Tag + Manual)
 
-# 触发条件：推送任意 Tag（格式建议 v*，如 v1.0.0、v2.1.1）
+# 触发条件：1. 推送v开头的Tag  2. 手动触发
 on:
   push:
     tags:
-      - 'v*'  # 只匹配以 v 开头的 Tag（如 v1.0.0），可改为 '*' 匹配所有 Tag
+      - 'v*'  # Tag触发：匹配v1.0.0、v2.1.0等格式
+  workflow_dispatch:  # 手动触发：在Actions页面可点击执行
+    # 手动触发时可自定义参数（可选，增强灵活性）
+    inputs:
+      image_tag:
+        description: '自定义镜像标签（手动触发时生效）'
+        required: true
+        default: 'manual-latest'
+        type: string
 
-# 权限配置（不变，保证推送和公开镜像的权限）
+# 权限配置（不变）
 permissions:
   contents: read
   packages: write
@@ -16,30 +24,37 @@ jobs:
   build-and-push:
     runs-on: ubuntu-latest
     steps:
-      # 步骤 1：拉取仓库代码（包含 Tag 信息）
+      # 步骤1：拉取完整代码（包含Tag信息）
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # 拉取完整历史，确保能获取 Tag 信息
+          fetch-depth: 0
 
-      # 步骤 2：提取 Tag 名称作为镜像标签（核心修改）
-      - name: Set image info from Tag
+      # 步骤2：根据触发方式动态设置镜像标签（核心兼容逻辑）
+      - name: Set image info (Tag/Manual)
         run: |
-          # 获取推送的 Tag 名称（如 refs/tags/v1.0.0 → v1.0.0）
-          TAG_NAME=${GITHUB_REF#refs/tags/}
-          # 转为小写的 GitHub 用户名
+          # 转为小写的GitHub用户名
           USERNAME=$(echo "${{ github.actor }}" | tr '[:upper:]' '[:lower:]')
-          # 自定义镜像名
-          IMAGE_NAME="iptv-m3u-manager"
-          
-          # 拼接完整镜像名
+          IMAGE_NAME="my-public-app"
           FULL_IMAGE="ghcr.io/$USERNAME/$IMAGE_NAME"
+          
+          # 判断触发方式：Tag触发 / 手动触发
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            # Tag触发：用Tag名作为镜像标签
+            TAG_NAME=${GITHUB_REF#refs/tags/}
+            echo "触发方式：Tag推送，镜像标签=$TAG_NAME"
+          else
+            # 手动触发：用输入的自定义标签
+            TAG_NAME="${{ github.event.inputs.image_tag }}"
+            echo "触发方式：手动执行，镜像标签=$TAG_NAME"
+          fi
+          
           # 输出环境变量
           echo "FULL_IMAGE=$FULL_IMAGE" >> $GITHUB_ENV
           echo "TAG_NAME=$TAG_NAME" >> $GITHUB_ENV
           echo "LATEST_TAG=latest" >> $GITHUB_ENV
 
-      # 步骤 3：免密登录 GHCR（不变）
+      # 步骤3：免密登录GHCR（不变）
       - name: Login to GHCR
         uses: docker/login-action@v3
         with:
@@ -47,19 +62,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 步骤 4：构建并推送镜像（用 Tag 作为镜像标签）
+      # 步骤4：构建并推送镜像（动态标签）
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: .
           push: true
           tags: |
-            ${{ env.FULL_IMAGE }}:${{ env.TAG_NAME }}  # 镜像标签 = GitHub Tag 名
-            ${{ env.FULL_IMAGE }}:${{ env.LATEST_TAG }} # 同时打 latest 标签
+            ${{ env.FULL_IMAGE }}:${{ env.TAG_NAME }}  # 动态标签（Tag/手动自定义）
+            ${{ env.FULL_IMAGE }}:${{ env.LATEST_TAG }} # 固定latest标签
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # 步骤 5：自动设为公开镜像（不变）
+      # 步骤5：自动设为公开镜像（不变）
       - name: Set package visibility to public
         run: |
           curl -X PATCH \
